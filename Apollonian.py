@@ -42,9 +42,10 @@ def apollonian(B):
         G.add_node(ID, r=r, x=x, y=y)
         
     S = morphology.skeletonize(B>0)
-    V = get_voronoi_map(X, Y, B.shape)
-
-    YS, XS = np.where(S)
+    XS, YS = np.where(S)
+    
+    # V = get_voronoi_map(X, Y, B.shape)
+    V = get_voronoi_skeleton(X, Y, XS, YS, S.shape)
     
     D = spatial.distance.pdist(np.transpose(np.stack([XS, YS])))
     
@@ -52,8 +53,8 @@ def apollonian(B):
                 
         i, j = condensed_to_square(k, len(YS))
 
-        if V[YS[i], XS[i]] - V[YS[j], XS[j]] != 0:
-            G.add_edge(V[YS[i], XS[i]], V[YS[j], XS[j]])
+        if V[XS[i], YS[i]] - V[XS[j], YS[j]] != 0:
+            G.add_edge(V[XS[i], YS[i]], V[XS[j], YS[j]])
     
     VS = np.unique(V*S)
     
@@ -118,25 +119,19 @@ def apollonian_circle_packing(B, minR):
     r = (Height+Width)/2
     
     while r > minR:
-        r = np.max(Dist)
         Ind = np.argmax(Dist)
         y, x = np.unravel_index(Ind,Dist.shape)
         
-        ymin = int(y-2*r)
-        ymax = int(y+2*r)
-        xmin = int(x-2*r)
-        xmax = int(x+2*r)
-        
-        if ymin < 0:
-            ymin = 0
-        if xmin < 0:
-            xmin = 0
-        if ymax >= Height:
-            ymax = Height-1
-        if xmax >= Width:
-            xmax = Width-1
+        r = Dist[y,x]
 
+        ymin = 0 if int(y-2*r) < 0 else int(y-2*r)
+        ymax = Height-1 if int(y+2*r) >= Height else int(y+2*r) 
+        xmin = 0 if int(x-2*r) < 0 else int(x-2*r)
+        xmax = Width-1 if int(x+2*r) >= Height else int(x+2*r) 
+        
         B[np.sqrt((x-mX)**2+(y-mY)**2)<=r] = 0
+
+        # recalculate edt in a window, fuse with full edt with gaussian weights
         
         Dist_Window = edt(B[ymin:ymax,xmin:xmax])
         xWm, yWm = np.meshgrid(range(np.size(Dist_Window,axis=1)),range(np.size(Dist_Window,axis=0)))
@@ -215,7 +210,7 @@ def get_voronoi_map(x, y, size):
 
     pos = np.asarray([[xi, yi] for xi, yi in zip(x, y)])
     
-    X,Y = np.meshgrid(np.arange(size[1]),np.arange(size[0]))
+    X, Y = np.meshgrid(np.arange(size[1]),np.arange(size[0]))
     XY = np.c_[X.ravel(), Y.ravel()]
     
     Tree = spatial.cKDTree(pos)
@@ -223,6 +218,45 @@ def get_voronoi_map(x, y, size):
 
     return V
 
+
+def get_voronoi_skeleton(x, y, X, Y, size):
+    """
+    Function to compute the voronoi tesselation for the set of points (x, y),
+    sampled only at the points (Y, X).
+
+    Parameters
+    ----------
+    x : numpy array
+        x-coordinates centers
+    y : numpy array
+        y-coordinates centers
+    X : numpy array
+        x-coordinates samples
+    Y : numpy array
+        y-coordinates samples
+    size : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    V : numpy array
+        sampled voronoi tesselation with shape size
+
+    """
+    
+    
+    pos = np.asarray([[xi, yi] for xi, yi in zip(x, y)])
+    XY = np.c_[Y.ravel(), X.ravel()]
+    
+    Tree = spatial.cKDTree(pos)
+    V = np.float32(Tree.query(XY)[1])
+    
+    VS = np.zeros(size)
+    
+    for x, y, v in zip(X, Y, V):
+        VS[x, y] = v
+
+    return VS
 
 #------------------------------------------------------------------------------
 # Functions for converting indices between condensed distance matrices and
@@ -247,10 +281,16 @@ def condensed_to_square(k, n):
 
 if __name__ == '__main__':
     
+    import time
+    
+    start = time.time()
+    
     File = './example.jpeg'
     B = cv2.imread(File, cv2.IMREAD_GRAYSCALE)
     
     G = apollonian(B)
+    
+    print(time.time()-start)
     
     plt.figure(figsize=2*plt.figaspect(1))
     plt.imshow(B, cmap='gray')
